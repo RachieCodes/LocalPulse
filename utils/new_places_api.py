@@ -418,17 +418,20 @@ class NewPlacesAPISearch:
         """Generate US phone number format"""
         return f"({random.randint(200, 999)}) {random.randint(200, 999)}-{random.randint(1000, 9999)}"
 
-    def get_business_reviews(self, place_id: str) -> List[Dict]:
-        """Fetch reviews for a specific business using place_id"""
+    def get_business_reviews(self, place_id: str, max_reviews: int = 50) -> List[Dict]:
+        """
+        Fetch reviews for a specific business using place_id
+        Enhanced to get maximum available review data
+        """
         if not self.places_available:
             return self._generate_demo_reviews()
         
         try:
-            # Get place details including reviews
+            # Get place details including comprehensive review data
             details_url = f"https://places.googleapis.com/v1/places/{place_id}"
             headers = {
                 'X-Goog-Api-Key': self.api_key,
-                'X-Goog-FieldMask': 'reviews,displayName'
+                'X-Goog-FieldMask': 'reviews.authorAttribution,reviews.publishTime,reviews.rating,reviews.text,reviews.originalText,reviews.relativePublishTimeDescription,displayName,rating,userRatingCount'
             }
             
             response = requests.get(details_url, headers=headers)
@@ -436,46 +439,140 @@ class NewPlacesAPISearch:
             if response.status_code == 200:
                 result = response.json()
                 reviews_data = result.get('reviews', [])
+                business_name = result.get('displayName', 'Unknown Business')
+                business_rating = result.get('rating', 0)
+                
+                print(f"✅ Found {len(reviews_data)} reviews for {business_name}")
                 
                 reviews = []
                 for review in reviews_data:
                     try:
+                        # Extract author information
+                        author_info = review.get('authorAttribution', {})
+                        author_name = author_info.get('displayName', 'Anonymous')
+                        author_uri = author_info.get('uri', '')
+                        author_photo_uri = author_info.get('photoUri', '')
+                        
+                        # Extract review text (prefer original language)
+                        text_obj = review.get('text', {})
+                        original_text_obj = review.get('originalText', {})
+                        
+                        review_text = original_text_obj.get('text', '') or text_obj.get('text', '')
+                        language_code = original_text_obj.get('languageCode') or text_obj.get('languageCode', 'en')
+                        
+                        # Extract timing information
+                        publish_time = review.get('publishTime', '')
+                        relative_time = review.get('relativePublishTimeDescription', '')
+                        
                         processed_review = {
-                            'reviewer_name': review.get('authorAttribution', {}).get('displayName', 'Anonymous'),
+                            # Author information
+                            'reviewer_name': author_name,
+                            'author_name': author_name,  # Alias for compatibility
+                            'author_url': author_uri,
+                            'profile_photo_url': author_photo_uri,
+                            
+                            # Review content
                             'rating': review.get('rating', 0),
-                            'review_text': review.get('text', {}).get('text', ''),
-                            'review_date': review.get('publishTime', ''),
-                            'helpful_votes': 0,  # Not available in Places API
+                            'review_text': review_text,
+                            'text': review_text,  # Alias for compatibility
+                            'language': language_code,
+                            'original_language': language_code,
+                            'translated': False,
+                            
+                            # Timing
+                            'review_date': publish_time,
+                            'time': publish_time,  # Alias for compatibility
+                            'relative_time_description': relative_time,
+                            
+                            # Metadata
                             'source': 'google_places',
-                            'place_id': place_id
+                            'place_id': place_id,
+                            'business_name': business_name,
+                            'business_rating': business_rating,
+                            'helpful_votes': 0,  # Not available in Places API
+                            'review_id': f"places_{place_id}_{hash(review_text + author_name + publish_time)}"
                         }
                         
-                        # Basic sentiment analysis
-                        text = processed_review['review_text']
-                        if text:
-                            # Simple sentiment scoring based on rating
-                            rating = processed_review['rating']
-                            if rating >= 4:
-                                processed_review['sentiment_label'] = 'positive'
-                                processed_review['sentiment_score'] = 0.7 + (rating - 4) * 0.15
-                            elif rating >= 3:
-                                processed_review['sentiment_label'] = 'neutral'
-                                processed_review['sentiment_score'] = 0.4 + (rating - 3) * 0.2
-                            else:
-                                processed_review['sentiment_label'] = 'negative'
-                                processed_review['sentiment_score'] = rating * 0.2
+                        # Enhanced sentiment analysis based on rating and text
+                        if review_text:
+                            rating_val = processed_review['rating']
                             
-                            # Extract basic keywords (simple approach)
-                            words = text.lower().split()
-                            keywords = [word for word in words if len(word) > 3 and word.isalpha()]
-                            processed_review['keywords'] = keywords[:10]  # Top 10 keywords
+                            # Enhanced rating-based sentiment with text keywords
+                            positive_keywords = ['great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'best', 'perfect', 'awesome', 'outstanding']
+                            negative_keywords = ['terrible', 'horrible', 'awful', 'hate', 'worst', 'bad', 'poor', 'disappointing', 'disgusting', 'pathetic']
+                            
+                            text_lower = review_text.lower()
+                            positive_count = sum(1 for word in positive_keywords if word in text_lower)
+                            negative_count = sum(1 for word in negative_keywords if word in text_lower)
+                            
+                            # Base sentiment from rating
+                            if rating_val >= 4:
+                                base_sentiment = 0.6 + (rating_val - 4) * 0.2
+                                sentiment_label = 'positive'
+                            elif rating_val >= 3:
+                                base_sentiment = 0.0
+                                sentiment_label = 'neutral'
+                            else:
+                                base_sentiment = -0.6 + (rating_val - 1) * 0.2
+                                sentiment_label = 'negative'
+                            
+                            # Adjust based on text keywords
+                            keyword_adjustment = (positive_count - negative_count) * 0.1
+                            final_sentiment = max(-1.0, min(1.0, base_sentiment + keyword_adjustment))
+                            
+                            # Re-classify if keywords strongly indicate otherwise
+                            if final_sentiment > 0.1:
+                                sentiment_label = 'positive'
+                            elif final_sentiment < -0.1:
+                                sentiment_label = 'negative'
+                            else:
+                                sentiment_label = 'neutral'
+                            
+                            processed_review.update({
+                                'sentiment_label': sentiment_label,
+                                'sentiment_score': final_sentiment,
+                                'sentiment_confidence': min(0.9, 0.5 + abs(final_sentiment) * 0.5),
+                                'sentiment_method': 'rating_plus_keywords'
+                            })
+                            
+                            # Extract keywords (improved)
+                            import re
+                            words = re.findall(r'\b[a-zA-Z]{3,}\b', text_lower)
+                            # Filter out common stop words
+                            stop_words = {'the', 'and', 'was', 'were', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'use', 'her', 'now', 'air', 'day', 'end', 'why'}
+                            keywords = [word for word in words if word not in stop_words and len(word) > 3]
+                            processed_review['keywords'] = list(set(keywords))[:15]  # Unique keywords, max 15
+                        else:
+                            # No text, sentiment based purely on rating
+                            rating_val = processed_review['rating']
+                            if rating_val >= 4:
+                                sentiment_score = 0.5 + (rating_val - 4) * 0.25
+                                sentiment_label = 'positive'
+                            elif rating_val >= 3:
+                                sentiment_score = 0.0
+                                sentiment_label = 'neutral'
+                            else:
+                                sentiment_score = -0.5 + (rating_val - 1) * 0.25
+                                sentiment_label = 'negative'
+                            
+                            processed_review.update({
+                                'sentiment_label': sentiment_label,
+                                'sentiment_score': sentiment_score,
+                                'sentiment_confidence': 0.6,  # Lower confidence without text
+                                'sentiment_method': 'rating_only',
+                                'keywords': []
+                            })
                         
                         reviews.append(processed_review)
                     except Exception as e:
                         logging.warning(f"Error processing review: {e}")
                         continue
                 
-                return reviews
+                print(f"✅ Successfully processed {len(reviews)} reviews")
+                return reviews[:max_reviews]  # Limit to max_reviews
+            else:
+                print(f"❌ API request failed with status {response.status_code}: {response.text}")
+                return self._generate_demo_reviews()
             
         except Exception as e:
             logging.error(f"Error fetching reviews: {e}")
@@ -483,6 +580,247 @@ class NewPlacesAPISearch:
         
         return self._generate_demo_reviews()
     
+    def search_places_with_reviews(self, query: str, location: str = "", max_results: int = 20) -> List[Dict]:
+        """
+        Search for places and fetch their reviews in one operation
+        Returns list of businesses with their reviews included
+        """
+        print(f"🔍 Searching for '{query}' in '{location}' with reviews...")
+        
+        try:
+            # First, search for places
+            businesses = self.search_businesses_near_city(f"{query} {location}", max_results=max_results)
+            
+            if not businesses:
+                print("❌ No businesses found")
+                return []
+            
+            print(f"✅ Found {len(businesses)} businesses, fetching reviews...")
+            
+            # For each business, fetch reviews
+            enhanced_businesses = []
+            for i, business in enumerate(businesses):
+                try:
+                    print(f"📖 Fetching reviews for {business.name} ({i+1}/{len(businesses)})")
+                    
+                    # Get reviews for this business
+                    reviews = self.get_business_reviews(business.place_id, max_reviews=20)
+                    
+                    # Create enhanced business dict with reviews
+                    enhanced_business = {
+                        'name': business.name,
+                        'address': business.address,
+                        'city': business.city,
+                        'state': business.state,
+                        'rating': business.rating,
+                        'review_count': business.review_count,
+                        'category': business.category,
+                        'subcategory': business.subcategory,
+                        'phone': business.phone,
+                        'latitude': business.latitude,
+                        'longitude': business.longitude,
+                        'place_id': business.place_id,
+                        'price_level': business.price_level,
+                        'reviews': reviews,
+                        'reviews_fetched': len(reviews),
+                        'avg_sentiment': sum(r.get('sentiment_score', 0) for r in reviews) / len(reviews) if reviews else 0,
+                        'sentiment_distribution': self._calculate_sentiment_distribution(reviews)
+                    }
+                    
+                    enhanced_businesses.append(enhanced_business)
+                    
+                    # Small delay to respect API limits
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    print(f"⚠️ Error fetching reviews for {business.name}: {e}")
+                    # Add business without reviews
+                    enhanced_business = {
+                        'name': business.name,
+                        'address': business.address,
+                        'city': business.city,
+                        'state': business.state,
+                        'rating': business.rating,
+                        'review_count': business.review_count,
+                        'category': business.category,
+                        'subcategory': business.subcategory,
+                        'phone': business.phone,
+                        'latitude': business.latitude,
+                        'longitude': business.longitude,
+                        'place_id': business.place_id,
+                        'price_level': business.price_level,
+                        'reviews': [],
+                        'reviews_fetched': 0,
+                        'avg_sentiment': 0,
+                        'sentiment_distribution': {'positive': 0, 'neutral': 0, 'negative': 0}
+                    }
+                    enhanced_businesses.append(enhanced_business)
+                    continue
+            
+            print(f"🎉 Successfully enhanced {len(enhanced_businesses)} businesses with review data")
+            return enhanced_businesses
+            
+        except Exception as e:
+            print(f"❌ Error in search_places_with_reviews: {e}")
+            return []
+    
+    def get_place_details_with_reviews(self, place_id: str) -> Optional[Dict]:
+        """
+        Get comprehensive place details including reviews
+        Returns a complete business profile with all available data
+        """
+        try:
+            # Get basic place details
+            details_url = f"https://places.googleapis.com/v1/places/{place_id}"
+            headers = {
+                'X-Goog-Api-Key': self.api_key,
+                'X-Goog-FieldMask': 'displayName,formattedAddress,rating,userRatingCount,location,types,nationalPhoneNumber,priceLevel,websiteUri,regularOpeningHours,reviews.authorAttribution,reviews.publishTime,reviews.rating,reviews.text,reviews.originalText,reviews.relativePublishTimeDescription'
+            }
+            
+            response = requests.get(details_url, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                # Extract location data
+                location_data = result.get('location', {})
+                lat = location_data.get('latitude', 0)
+                lng = location_data.get('longitude', 0)
+                
+                # Process address
+                address = result.get('formattedAddress', '')
+                city, state = self._extract_city_state_from_address(address)
+                
+                # Process categories
+                types = result.get('types', [])
+                main_category = types[0] if types else 'business'
+                subcategories = types[1:5] if len(types) > 1 else []
+                
+                # Process opening hours
+                opening_hours = result.get('regularOpeningHours', {})
+                hours_text = []
+                if opening_hours.get('periods'):
+                    # Convert periods to readable format
+                    for period in opening_hours.get('periods', []):
+                        if period.get('open') and period.get('close'):
+                            open_time = period['open'].get('time', '')
+                            close_time = period['close'].get('time', '')
+                            day = period['open'].get('day', 0)
+                            day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+                            if day < len(day_names):
+                                hours_text.append(f"{day_names[day]}: {open_time} - {close_time}")
+                
+                # Get reviews using our enhanced method
+                reviews = self.get_business_reviews(place_id, max_reviews=50)
+                
+                # Create comprehensive business profile
+                business_profile = {
+                    'place_id': place_id,
+                    'name': result.get('displayName', 'Unknown Business'),
+                    'address': address,
+                    'city': city,
+                    'state': state,
+                    'latitude': lat,
+                    'longitude': lng,
+                    'rating': result.get('rating', 0),
+                    'review_count': result.get('userRatingCount', 0),
+                    'category': main_category,
+                    'subcategory': subcategories,
+                    'phone': result.get('nationalPhoneNumber', ''),
+                    'website': result.get('websiteUri', ''),
+                    'price_level': result.get('priceLevel'),
+                    'opening_hours': hours_text,
+                    'reviews': reviews,
+                    'reviews_fetched': len(reviews),
+                    'avg_sentiment': sum(r.get('sentiment_score', 0) for r in reviews) / len(reviews) if reviews else 0,
+                    'sentiment_distribution': self._calculate_sentiment_distribution(reviews),
+                    'keyword_analysis': self._extract_top_keywords(reviews),
+                    'rating_distribution': self._calculate_rating_distribution(reviews)
+                }
+                
+                print(f"✅ Fetched complete profile for {business_profile['name']} with {len(reviews)} reviews")
+                return business_profile
+                
+            else:
+                print(f"❌ Failed to fetch place details: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error fetching place details: {e}")
+            return None
+    
+    def _calculate_sentiment_distribution(self, reviews: List[Dict]) -> Dict[str, int]:
+        """Calculate sentiment distribution from reviews"""
+        distribution = {'positive': 0, 'neutral': 0, 'negative': 0}
+        for review in reviews:
+            sentiment = review.get('sentiment_label', 'neutral')
+            if sentiment in distribution:
+                distribution[sentiment] += 1
+        return distribution
+    
+    def _extract_top_keywords(self, reviews: List[Dict], top_n: int = 20) -> List[Dict]:
+        """Extract most common keywords from reviews"""
+        from collections import Counter
+        
+        all_keywords = []
+        for review in reviews:
+            keywords = review.get('keywords', [])
+            all_keywords.extend(keywords)
+        
+        if not all_keywords:
+            return []
+        
+        # Count keyword frequency
+        keyword_counts = Counter(all_keywords)
+        
+        # Return top keywords with their counts
+        top_keywords = []
+        for keyword, count in keyword_counts.most_common(top_n):
+            top_keywords.append({
+                'keyword': keyword,
+                'count': count,
+                'frequency': count / len(all_keywords) if all_keywords else 0
+            })
+        
+        return top_keywords
+    
+    def _calculate_rating_distribution(self, reviews: List[Dict]) -> Dict[int, int]:
+        """Calculate rating distribution from reviews"""
+        distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        for review in reviews:
+            rating = review.get('rating', 0)
+            if 1 <= rating <= 5:
+                distribution[rating] += 1
+        return distribution
+    
+    def _extract_city_state_from_address(self, address: str) -> tuple:
+        """Extract city and state from formatted address"""
+        try:
+            if not address:
+                return "Unknown City", "Unknown State"
+            
+            # Split by commas and get the parts
+            parts = [part.strip() for part in address.split(',')]
+            
+            if len(parts) >= 3:
+                # Format: "Street, City, State Zip, Country"
+                city = parts[-3]
+                state_zip = parts[-2]
+                # Extract state from "State Zip" format
+                state = state_zip.split()[0] if state_zip else "Unknown State"
+                return city, state
+            elif len(parts) == 2:
+                # Format: "City, State" or "City, Country"
+                city = parts[0]
+                state = parts[1].split()[0] if parts[1] else "Unknown State"
+                return city, state
+            else:
+                # Fallback
+                return parts[0] if parts else "Unknown City", "Unknown State"
+                
+        except Exception as e:
+            return "Unknown City", "Unknown State"
+
     def _generate_demo_reviews(self) -> List[Dict]:
         """Generate demo reviews when API is not available"""
         demo_reviews = [

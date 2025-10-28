@@ -1,23 +1,34 @@
 # LocalPulse - Local Business Analytics Dashboard
 
-A comprehensive dashboard for analyzing local businesses using web scraping, sentiment analysis, and interactive visualizations.
+A comprehensive dashboard for analyzing local businesses using enhanced Google Places API, web scraping, and advanced sentiment analysis.
 
 ## 🌟 Features
 
 ### Dashboard Capabilities
-- **Top-rated businesses** by category and location
-- **Review sentiment analysis** over time 
-- **Keyword cloud** from reviews with trending insights
+- **Enhanced Google Places Reviews**: Real-time review fetching using `places/{placeId}/reviews` pattern
+- **Advanced sentiment analysis** with multi-method approach (rating + keyword-based scoring)
+- **Top-rated businesses** by category and location with comprehensive review data
+- **Interactive review search** - find businesses and fetch their reviews in one operation
+- **Keyword cloud** from reviews with trending insights and frequency analysis
 - **Opening hours vs. peak review times** analysis
 - **Competitor comparison** with market benchmarks
 - **Geospatial visualization** on interactive maps
 - **Rating anomaly detection** (sudden drops/increases)
 
+### Enhanced Google Places API Integration
+- **Real-time review fetching**: Uses Google Places API (New) for comprehensive review data
+- **Enhanced data extraction**: Author info, review text, ratings, timestamps, relative time descriptions
+- **Smart sentiment analysis**: Combines rating-based scoring with keyword detection
+- **Automatic keyword extraction**: Advanced text processing with stop-word filtering
+- **Confidence scoring**: Provides confidence levels for sentiment predictions
+- **Batch processing**: Efficiently handles multiple businesses with rate limiting
+
 ### Technical Stack
+- **Enhanced Google Places API**: Real-time business and review data
 - **Scrapy**: Web scraping for Yelp, Google Places, business directories
 - **MongoDB**: Structured data storage with geospatial indexing
 - **Streamlit**: Interactive dashboard framework
-- **NLP**: Sentiment analysis and keyword extraction
+- **Advanced NLP**: Multi-method sentiment analysis and keyword extraction
 - **Celery + Redis**: Automated scheduling and background tasks
 - **Plotly**: Advanced data visualizations
 
@@ -134,6 +145,56 @@ LocalPulse/
 - Market average benchmarks
 - Performance metrics visualization
 - Category-based analysis
+
+## 🌐 Enhanced Google Places API
+
+### Real-time Review Fetching
+The enhanced Google Places API integration provides comprehensive review data using the `places/{placeId}/reviews` pattern:
+
+```python
+from utils.new_places_api import NewPlacesAPISearch
+
+# Initialize API
+api = NewPlacesAPISearch()
+
+# Method 1: Search places and fetch reviews in one operation
+results = api.search_places_with_reviews(
+    query="coffee shops",
+    location="San Francisco, CA", 
+    max_results=20
+)
+
+# Method 2: Get comprehensive place details with reviews
+place_details = api.get_place_details_with_reviews(place_id)
+
+# Method 3: Fetch reviews for specific place
+reviews = api.get_business_reviews(place_id, max_reviews=50)
+```
+
+### Enhanced Data Features
+- **Comprehensive Review Data**: Author info, text, ratings, timestamps, relative time
+- **Smart Sentiment Analysis**: Rating + keyword-based scoring with confidence levels
+- **Automatic Keyword Extraction**: Advanced text processing with stop-word filtering
+- **Batch Processing**: Efficient handling of multiple businesses with rate limiting
+- **Dashboard Integration**: Seamless integration with existing analytics
+
+### Dashboard Integration
+- **⭐ Fetch Reviews for Existing Businesses**: Automatically fetch reviews for businesses already in database
+- **🔍 Search Places with Reviews**: Find new businesses and fetch their reviews simultaneously
+- **📊 Enhanced Analytics**: Multi-method sentiment analysis with confidence scoring
+- **🎯 Smart Processing**: Automatic duplicate detection and data normalization
+
+### API Setup
+1. **Get Google Places API Key**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Enable "Places API (New)"
+   - Create an API key
+   - Add to `.env`: `GOOGLE_PLACES_API_KEY=your_api_key_here`
+
+2. **Test Integration**:
+   ```bash
+   python example_enhanced_places_api.py
+   ```
 
 ## 🕷️ Data Collection
 
